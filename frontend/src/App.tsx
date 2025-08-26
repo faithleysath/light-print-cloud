@@ -11,7 +11,8 @@ import 'react-pdf/dist/Page/TextLayer.css';
 import { Preview } from '@/components/Preview';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { useMediaQuery } from '@/hooks/use-media-query';
-import { Eye } from 'lucide-react';
+import { Eye, Terminal, CheckCircle, XCircle } from 'lucide-react';
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 // Configure the PDF.js worker
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
@@ -31,6 +32,7 @@ interface PrinterOptions {
 }
 
 type PreviewType = 'pdf' | 'image' | 'text' | 'none';
+type JobStatusType = 'info' | 'success' | 'error';
 
 function App() {
   const [printers, setPrinters] = useState<string[]>([]);
@@ -47,6 +49,7 @@ function App() {
   const [printQuality, setPrintQuality] = useState<string>(''); // Will be set based on printer options
   const [jobId, setJobId] = useState<number | null>(null);
   const [jobStatus, setJobStatus] = useState<string | null>(null);
+  const [jobStatusType, setJobStatusType] = useState<JobStatusType>('info');
   const [error, setError] = useState<string | null>(null);
   const [numPages, setNumPages] = useState<number | null>(null);
   const [isWaitingForFlip, setIsWaitingForFlip] = useState<boolean>(false);
@@ -132,9 +135,17 @@ function App() {
         if (!response.ok) {
           throw new Error(data.error || 'Failed to fetch job status.');
         }
+        
         setJobStatus(`任务 ${jobId}: ${data.state} (${data.reason})`);
-        if (['completed', 'canceled', 'aborted'].includes(data.state)) {
+        
+        if (data.state === 'completed') {
+          setJobStatusType('success');
           clearInterval(intervalId);
+        } else if (['canceled', 'aborted'].includes(data.state)) {
+          setJobStatusType('error');
+          clearInterval(intervalId);
+        } else {
+          setJobStatusType('info');
         }
       } catch (error: any) {
         console.error("Failed to check job status:", error);
@@ -239,6 +250,7 @@ function App() {
     
     setError(null);
     setJobStatus("正在提交打印任务...");
+    setJobStatusType('info');
 
     try {
       const response = await fetch(`${API_BASE_URL}/api/print`, {
@@ -249,6 +261,7 @@ function App() {
       if (response.ok) {
         setJobId(data.job_id);
         setJobStatus(`任务 ${data.job_id} 已提交，正在获取状态...`);
+        setJobStatusType('info');
         return data.job_id;
       } else {
         throw new Error(data.error || 'Print submission failed.');
@@ -278,6 +291,7 @@ function App() {
 
     // 1. Print odd pages
     setJobStatus("正在提交奇数页打印任务...");
+    setJobStatusType('info');
     const oddJobId = await submitPrintJob(oddPages);
 
     // 2. If odd pages are submitted successfully, wait for user to flip
@@ -294,11 +308,13 @@ function App() {
     
     setIsWaitingForFlip(false);
     setJobStatus("正在提交偶数页打印任务...");
+    setJobStatusType('info');
     
     // 3. Print even pages
     const evenJobId = await submitPrintJob(duplexJobDetails.evenPages);
     if (evenJobId) {
       setJobStatus(`双面打印任务已全部提交 (奇数页: ${duplexJobDetails.oddJobId}, 偶数页: ${evenJobId})`);
+      setJobStatusType('info');
     }
     setDuplexJobDetails(null);
   };
@@ -489,7 +505,21 @@ function App() {
                 双面打印
               </Button>
             </div>
-            {jobStatus && <p className="mt-4 text-sm text-muted-foreground text-center">{jobStatus}</p>}
+            {jobStatus && (
+              <Alert variant={jobStatusType === 'error' ? 'destructive' : 'default'} className="mt-4">
+                {jobStatusType === 'info' && <Terminal className="h-4 w-4" />}
+                {jobStatusType === 'success' && <CheckCircle className="h-4 w-4" />}
+                {jobStatusType === 'error' && <XCircle className="h-4 w-4" />}
+                <AlertTitle>
+                  {jobStatusType === 'info' && '处理中'}
+                  {jobStatusType === 'success' && '任务完成'}
+                  {jobStatusType === 'error' && '任务失败'}
+                </AlertTitle>
+                <AlertDescription>
+                  {jobStatus}
+                </AlertDescription>
+              </Alert>
+            )}
           </div>
         </Card>
       </div>
