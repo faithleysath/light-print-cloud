@@ -1,13 +1,17 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { FileUpload } from '@/components/FileUpload';
-import { Document, Page, pdfjs } from 'react-pdf';
+import { pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
+import { Preview } from '@/components/Preview';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { useMediaQuery } from '@/hooks/use-media-query';
+import { Eye } from 'lucide-react';
 
 // Configure the PDF.js worker
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
@@ -45,6 +49,7 @@ function App() {
   const [jobStatus, setJobStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [numPages, setNumPages] = useState<number | null>(null);
+  const isDesktop = useMediaQuery("(min-width: 1024px)");
 
   // Fetch printers on component mount
   useEffect(() => {
@@ -148,35 +153,6 @@ function App() {
     };
   }, [previewUrl]);
 
-  // Memoize the parsed page numbers to avoid re-calculating on every render
-  const pagesToRender = useMemo(() => {
-    if (!pageRange) return null;
-    const pages = new Set<number>();
-    const parts = pageRange.split(',');
-    try {
-      for (const part of parts) {
-        const trimmedPart = part.trim();
-        if (trimmedPart.includes('-')) {
-          const [start, end] = trimmedPart.split('-').map(Number);
-          if (!isNaN(start) && !isNaN(end) && start <= end) {
-            for (let i = start; i <= end; i++) pages.add(i);
-          }
-        } else {
-          const pageNum = Number(trimmedPart);
-          if (!isNaN(pageNum)) pages.add(pageNum);
-        }
-      }
-      const sortedPages = Array.from(pages).sort((a, b) => a - b);
-      if (numPages) {
-        return sortedPages.filter(p => p > 0 && p <= numPages);
-      }
-      return sortedPages;
-    } catch (e) {
-      console.error("Error parsing page range:", e);
-      return null;
-    }
-  }, [pageRange, numPages]);
-
   const handleFileSelect = async (selectedFile: File) => {
     const allowedExtensions = ['pdf', 'txt', 'png', 'jpg', 'jpeg', 'gif', 'doc', 'docx'];
     const fileExtension = selectedFile.name.split('.').pop()?.toLowerCase();
@@ -275,82 +251,62 @@ function App() {
     }
   };
 
-  const renderPreview = () => {
-    switch (previewType) {
-      case 'pdf':
-        return (
-          <div className="flex-grow w-full h-full overflow-auto bg-muted/50 rounded-md p-4">
-            <Document
-              file={previewUrl}
-              onLoadSuccess={({ numPages }) => setNumPages(numPages)}
-              onLoadError={(e) => {
-                console.error('Failed to load PDF:', e);
-                setError(`无法加载PDF预览: ${e.message}`);
-              }}
-              className="flex flex-col items-center"
-            >
-              {pagesToRender ? (
-                pagesToRender.map((pageNumber) => (
-                  <div key={`page_wrapper_${pageNumber}`} className="mb-4">
-                    <Page pageNumber={pageNumber} className="shadow-lg" />
-                    <p className="text-center text-sm text-muted-foreground mt-2">第 {pageNumber} 页</p>
-                  </div>
-                ))
-              ) : (
-                Array.from(new Array(numPages || 0), (_, index) => {
-                  const pageNumber = index + 1;
-                  return (
-                    <div key={`page_wrapper_${pageNumber}`} className="mb-4">
-                      <Page pageNumber={pageNumber} className="shadow-lg" />
-                      <p className="text-center text-sm text-muted-foreground mt-2">第 {pageNumber} 页 / 共 {numPages} 页</p>
-                    </div>
-                  );
-                })
-              )}
-            </Document>
-          </div>
-        );
-      case 'image':
-        return (
-          <div className="flex-grow w-full h-full flex items-center justify-center overflow-auto bg-muted/50 rounded-md p-4">
-            <img src={previewUrl!} alt="File Preview" className="max-w-full max-h-full object-contain" />
-          </div>
-        );
-      case 'text':
-        return (
-          <div className="flex-grow w-full h-full overflow-auto bg-muted/50 rounded-md p-4">
-            <pre className="text-sm whitespace-pre-wrap">{textContent}</pre>
-          </div>
-        );
-      default:
-        return (
-          <div className="flex-grow flex items-center justify-center bg-muted/50 rounded-md">
-            <p className="text-muted-foreground">请上传文件以查看预览</p>
-          </div>
-        );
-    }
-  };
+  const previewContent = (
+    <Preview
+      previewType={previewType}
+      previewUrl={previewUrl}
+      textContent={textContent}
+      pageRange={pageRange}
+      numPages={numPages}
+      onPdfLoadSuccess={(numPages) => setNumPages(numPages)}
+      onPdfLoadError={(e) => {
+        console.error('Failed to load PDF:', e);
+        setError(`无法加载PDF预览: ${e.message}`);
+      }}
+    />
+  );
 
   return (
     <div className="container mx-auto p-4 h-screen flex flex-col">
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 flex-grow min-h-0">
-        <Card className="lg:col-span-2 flex flex-col overflow-hidden">
-          <CardHeader>
-            <CardTitle>预览</CardTitle>
-          </CardHeader>
-          <CardContent className="flex-grow flex flex-col min-h-0">
-            {error && (
-              <div className="bg-destructive/20 border border-destructive text-destructive p-3 rounded-md mb-4">
-                {error}
-              </div>
-            )}
-            {renderPreview()}
-          </CardContent>
-        </Card>
+        {isDesktop && (
+          <Card className="lg:col-span-2 flex flex-col overflow-hidden">
+            <CardHeader>
+              <CardTitle>预览</CardTitle>
+            </CardHeader>
+            <CardContent className="flex-grow flex flex-col min-h-0">
+              {error && (
+                <div className="bg-destructive/20 border border-destructive text-destructive p-3 rounded-md mb-4">
+                  {error}
+                </div>
+              )}
+              {previewContent}
+            </CardContent>
+          </Card>
+        )}
 
-        <Card className="col-span-1 flex flex-col">
+        <Card className={`flex flex-col ${isDesktop ? 'lg:col-span-1' : 'col-span-1'}`}>
           <CardHeader>
-            <CardTitle>打印设置</CardTitle>
+            <div className="flex justify-between items-center">
+              <CardTitle>打印设置</CardTitle>
+              {!isDesktop && file && (
+                <Dialog>
+                  <DialogTrigger asChild>
+                    <Button variant="outline" size="icon">
+                      <Eye className="h-4 w-4" />
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent className="max-w-[90vw] w-full h-[80vh] flex flex-col">
+                    <DialogHeader>
+                      <DialogTitle>文件预览</DialogTitle>
+                    </DialogHeader>
+                    <div className="flex-grow min-h-0">
+                      {previewContent}
+                    </div>
+                  </DialogContent>
+                </Dialog>
+              )}
+            </div>
           </CardHeader>
           <CardContent className="flex-grow flex flex-col gap-6">
             <FileUpload onFileSelect={handleFileSelect} />
