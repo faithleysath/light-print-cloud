@@ -3,8 +3,6 @@ import subprocess
 from flask import Flask, request, jsonify, send_from_directory, render_template
 from flask_cors import CORS
 import cups
-import tempfile
-from pypdf import PdfReader, PdfWriter
 
 # --- Configuration ---
 UPLOAD_FOLDER = 'uploads'
@@ -27,36 +25,6 @@ def allowed_file(filename):
 def ensure_dir(directory):
     if not os.path.exists(directory):
         os.makedirs(directory)
-
-def parse_page_ranges(range_string, max_pages):
-    """Parses a page range string (e.g., '1,3-5,9,8-6') into an ordered list of page indices (0-based)."""
-    pages = []
-    if not range_string:
-        return list(range(max_pages))
-        
-    try:
-        parts = range_string.split(',')
-        for part in parts:
-            if '-' in part:
-                start, end = map(int, part.split('-'))
-                if start <= end:
-                    # Forward range: 3-5 -> pages 3, 4, 5
-                    for i in range(start, end + 1):
-                        if 1 <= i <= max_pages and (i - 1) not in pages:
-                            pages.append(i - 1)
-                else:
-                    # Reverse range: 8-6 -> pages 8, 7, 6
-                    for i in range(start, end - 1, -1):
-                        if 1 <= i <= max_pages and (i - 1) not in pages:
-                            pages.append(i - 1)
-            else:
-                page = int(part)
-                if 1 <= page <= max_pages and (page - 1) not in pages:
-                    pages.append(page - 1)
-    except (ValueError, TypeError):
-        # If parsing fails, return all pages as a fallback
-        return list(range(max_pages))
-    return pages
 
 # --- API Routes ---
 @app.route('/api/printers', methods=['GET'])
@@ -121,10 +89,11 @@ def print_document():
     file = request.files['file']
     printer_name = request.form.get('printer')
     copies = int(request.form.get('copies', 1))
+    # Get additional print options from the form
     page_range = request.form.get('page_range')
-    paper_size = request.form.get('paper_size', 'A4')
-    color_mode = request.form.get('color_mode', 'color')
-    print_quality = request.form.get('print_quality')
+    paper_size = request.form.get('paper_size', 'A4') # Default to A4
+    color_mode = request.form.get('color_mode', 'color') # Default to color
+    print_quality = request.form.get('print_quality') # Get print quality
 
     if file.filename == '':
         return jsonify({"error": "No selected file"}), 400
@@ -137,10 +106,10 @@ def print_document():
         file.save(upload_path)
 
         file_to_print = upload_path
-        original_file_ext = filename.rsplit('.', 1)[1].lower()
+        file_ext = filename.rsplit('.', 1)[1].lower()
 
-        # Convert DOC/DOCX to PDF if necessary
-        if original_file_ext in ['doc', 'docx']:
+        # Convert if necessary
+        if file_ext in ['doc', 'docx']:
             try:
                 pdf_filename = os.path.splitext(filename)[0] + '.pdf'
                 pdf_path = os.path.join(app.config['CONVERT_FOLDER'], pdf_filename)
@@ -150,31 +119,8 @@ def print_document():
                 )
                 file_to_print = pdf_path
             except (subprocess.CalledProcessError, FileNotFoundError) as e:
-                print(f"Conversion failed: {e}")
+                print(f"Conversion failed during print request: {e}")
                 return jsonify({"error": "Failed to convert document for printing."}), 500
-        
-        # If a page range is specified and we have a PDF, process it.
-        if page_range and file_to_print.lower().endswith('.pdf'):
-            try:
-                reader = PdfReader(file_to_print)
-                writer = PdfWriter()
-                
-                # The parser now returns an ordered list of 0-based indices
-                selected_pages = parse_page_ranges(page_range, len(reader.pages))
-                
-                for page_index in selected_pages:
-                    # The parser already validates the range, but an extra check is safe
-                    if 0 <= page_index < len(reader.pages):
-                        writer.add_page(reader.pages[page_index])
-                
-                # Save the new PDF to a temporary file
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf", dir=app.config['CONVERT_FOLDER']) as temp_pdf:
-                    writer.write(temp_pdf.name)
-                    file_to_print = temp_pdf.name
-
-            except Exception as e:
-                print(f"PDF processing failed: {e}")
-                return jsonify({"error": "Failed to process PDF for the specified page range."}), 500
 
         # Submit to CUPS
         try:
@@ -183,13 +129,17 @@ def print_document():
             if printer_name not in printers:
                 return jsonify({"error": f"Printer '{printer_name}' not found."}), 404
             
+            # Build the options dictionary for CUPS
             print_options = {
                 'copies': str(copies),
                 'media': paper_size,
                 'print-color-mode': color_mode
             }
-            # We no longer pass 'page-ranges' to CUPS directly
+            if page_range:
+                # CUPS expects 'page-ranges' for specifying pages
+                print_options['page-ranges'] = page_range
             if print_quality:
+                # Map quality names back to CUPS integer values
                 quality_map_inv = {'draft': '3', 'normal': '4', 'high': '5'}
                 if print_quality in quality_map_inv:
                     print_options['print-quality'] = quality_map_inv[print_quality]
@@ -198,15 +148,12 @@ def print_document():
             return jsonify({"status": "success", "job_id": job_id})
 
         except RuntimeError as e:
-            print(f"CUPS connection failed: {e}")
+            print(f"CUPS connection failed during print: {e}")
+            # In a no-CUPS environment, we can't proceed.
             return jsonify({"error": "Could not connect to CUPS printing service."}), 500
         except Exception as e:
             print(f"An unexpected error occurred during printing: {e}")
             return jsonify({"error": "An unexpected error occurred during printing."}), 500
-        finally:
-            # Clean up the temporary file if it was created
-            if 'temp_pdf' in locals() and os.path.exists(temp_pdf.name):
-                os.remove(temp_pdf.name)
 
     return jsonify({"error": "File type not allowed"}), 400
 

@@ -282,8 +282,7 @@ function App() {
 
     // Generate page ranges for odd and even pages
     const oddPages = Array.from({ length: numPages }, (_, i) => i + 1).filter(n => n % 2 !== 0).join(',');
-    // For even pages, reverse the order for correct manual duplex printing
-    const evenPages = Array.from({ length: numPages }, (_, i) => i + 1).filter(n => n % 2 === 0).reverse().join(',');
+    const evenPages = Array.from({ length: numPages }, (_, i) => i + 1).filter(n => n % 2 === 0).join(',');
 
     if (!oddPages) {
       setError("没有奇数页可以打印。");
