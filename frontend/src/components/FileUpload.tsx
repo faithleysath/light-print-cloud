@@ -65,6 +65,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect }) => {
         type="file"
         className="hidden"
         onChange={handleFileChange}
+        accept=".pdf,.txt,.png,.jpg,.jpeg,.gif,.doc,.docx,application/pdf,text/plain,image/png,image/jpeg,image/gif,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
       />
       <div className="flex flex-col items-center justify-center text-center">
         <UploadCloud className={cn("w-12 h-12 mb-4", isDragging ? "text-primary" : "text-muted-foreground")} />

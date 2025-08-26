@@ -43,6 +43,43 @@ def get_printers():
         print(f"An unexpected error occurred: {e}")
         return jsonify({"error": "An unexpected error occurred while fetching printers."}), 500
 
+@app.route('/api/printers/<path:printer_name>/options', methods=['GET'])
+def get_printer_options(printer_name):
+    """Gets the supported options for a specific printer."""
+    try:
+        conn = cups.Connection()
+        # Ensure the printer exists before getting attributes
+        printers = conn.getPrinters()
+        if printer_name not in printers:
+            return jsonify({"error": "Printer not found."}), 404
+            
+        attrs = conn.getPrinterAttributes(printer_name)
+        
+        # Extracting common useful options
+        # Note: The keys like "media-supported" might vary slightly between CUPS versions/drivers.
+        # These are common IPP attribute names.
+        options = {
+            "media_supported": attrs.get("media-supported", []),
+            "print_quality_supported": attrs.get("print-quality-supported", []),
+            # "sides_supported": attrs.get("sides-supported", []), # As per user feedback, we will handle duplex manually
+            "color_supported": attrs.get("print-color-mode-supported", [])
+        }
+
+        # The value for 'print-quality-supported' is often an integer enum.
+        # We can provide a mapping to human-readable names.
+        quality_map = {3: 'draft', 4: 'normal', 5: 'high'}
+        if options["print_quality_supported"]:
+            options["print_quality_supported"] = [quality_map.get(q, 'unknown') for q in options["print_quality_supported"]]
+
+        return jsonify(options)
+    except RuntimeError as e:
+        print(f"CUPS connection failed while getting options: {e}")
+        return jsonify({"error": "Could not connect to CUPS to get printer options."}), 500
+    except Exception as e:
+        print(f"An unexpected error occurred while getting printer options: {e}")
+        return jsonify({"error": f"An unexpected error occurred: {e}"}), 500
+
+
 @app.route('/api/print', methods=['POST'])
 def print_document():
     """Handles the print request."""
@@ -52,6 +89,10 @@ def print_document():
     file = request.files['file']
     printer_name = request.form.get('printer')
     copies = int(request.form.get('copies', 1))
+    # Get additional print options from the form
+    page_range = request.form.get('page_range')
+    paper_size = request.form.get('paper_size', 'A4') # Default to A4
+    color_mode = request.form.get('color_mode', 'color') # Default to color
 
     if file.filename == '':
         return jsonify({"error": "No selected file"}), 400
@@ -87,7 +128,15 @@ def print_document():
             if printer_name not in printers:
                 return jsonify({"error": f"Printer '{printer_name}' not found."}), 404
             
-            print_options = {'copies': str(copies)}
+            # Build the options dictionary for CUPS
+            print_options = {
+                'copies': str(copies),
+                'media': paper_size,
+                'print-color-mode': color_mode
+            }
+            if page_range:
+                # CUPS expects 'page-ranges' for specifying pages
+                print_options['page-ranges'] = page_range
             
             job_id = conn.printFile(printer_name, file_to_print, f"WebApp Print - {filename}", print_options)
             return jsonify({"status": "success", "job_id": job_id})
