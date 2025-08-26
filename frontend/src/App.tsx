@@ -9,7 +9,7 @@ import { pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 import { Preview } from '@/components/Preview';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import { Eye } from 'lucide-react';
 
@@ -49,6 +49,8 @@ function App() {
   const [jobStatus, setJobStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [numPages, setNumPages] = useState<number | null>(null);
+  const [isWaitingForFlip, setIsWaitingForFlip] = useState<boolean>(false);
+  const [duplexJobDetails, setDuplexJobDetails] = useState<{ oddJobId: number, evenPages: string } | null>(null);
   const isDesktop = useMediaQuery("(min-width: 1024px)");
 
   // Fetch printers on component mount
@@ -217,21 +219,27 @@ function App() {
     }
   };
 
-  const handlePrint = async () => {
+  const submitPrintJob = async (pages?: string) => {
     if (!file || !selectedPrinter) {
       setError("请选择文件和打印机。");
-      return;
+      return null;
     }
     const formData = new FormData();
     formData.append('file', file);
     formData.append('printer', selectedPrinter);
     formData.append('copies', copies.toString());
-    if (pageRange) formData.append('page_range', pageRange);
+    
+    // Use the provided pages argument if it exists, otherwise use the state's pageRange
+    const effectivePageRange = pages ?? pageRange;
+    if (effectivePageRange) formData.append('page_range', effectivePageRange);
+
     formData.append('paper_size', paperSize);
     formData.append('color_mode', colorMode);
     if (printQuality) formData.append('print_quality', printQuality);
+    
     setError(null);
     setJobStatus("正在提交打印任务...");
+
     try {
       const response = await fetch(`${API_BASE_URL}/api/print`, {
         method: 'POST',
@@ -241,6 +249,7 @@ function App() {
       if (response.ok) {
         setJobId(data.job_id);
         setJobStatus(`任务 ${data.job_id} 已提交，正在获取状态...`);
+        return data.job_id;
       } else {
         throw new Error(data.error || 'Print submission failed.');
       }
@@ -248,6 +257,59 @@ function App() {
       console.error("Failed to print:", error);
       setError(`打印失败: ${error.message}`);
       setJobStatus(null);
+      return null;
+    }
+  };
+
+  const handlePrintDuplex = async () => {
+    if (!numPages) {
+      setError("无法获取PDF总页数，无法进行双面打印。请确保文件已正确预览。");
+      return;
+    }
+
+    // Generate page ranges for odd and even pages
+    const oddPages = Array.from({ length: numPages }, (_, i) => i + 1).filter(n => n % 2 !== 0).join(',');
+    const evenPages = Array.from({ length: numPages }, (_, i) => i + 1).filter(n => n % 2 === 0).join(',');
+
+    if (!oddPages) {
+      setError("没有奇数页可以打印。");
+      return;
+    }
+
+    // 1. Print odd pages
+    setJobStatus("正在提交奇数页打印任务...");
+    const oddJobId = await submitPrintJob(oddPages);
+
+    // 2. If odd pages are submitted successfully, wait for user to flip
+    if (oddJobId && evenPages) {
+      setDuplexJobDetails({ oddJobId, evenPages });
+      setIsWaitingForFlip(true);
+    } else if (oddJobId) {
+      setJobStatus(`奇数页任务 ${oddJobId} 已完成。没有偶数页可打印。`);
+    }
+  };
+
+  const handleContinueDuplex = async () => {
+    if (!duplexJobDetails) return;
+    
+    setIsWaitingForFlip(false);
+    setJobStatus("正在提交偶数页打印任务...");
+    
+    // 3. Print even pages
+    const evenJobId = await submitPrintJob(duplexJobDetails.evenPages);
+    if (evenJobId) {
+      setJobStatus(`双面打印任务已全部提交 (奇数页: ${duplexJobDetails.oddJobId}, 偶数页: ${evenJobId})`);
+    }
+    setDuplexJobDetails(null);
+  };
+
+  const handlePrintSingleSided = async () => {
+    if (pageRange) {
+      // If user specified a range, just print that range.
+      await submitPrintJob(pageRange);
+    } else {
+      // Otherwise, print all pages.
+      await submitPrintJob();
     }
   };
 
@@ -409,17 +471,42 @@ function App() {
             </div>
           </CardContent>
           <div className="p-6 pt-0 mt-auto">
-            <Button 
-              className="w-full" 
-              onClick={handlePrint} 
-              disabled={!file || !selectedPrinter}
-            >
-              打印
-            </Button>
+            <div className="flex gap-2">
+              <Button 
+                className="flex-1" 
+                onClick={handlePrintSingleSided} 
+                disabled={!file || !selectedPrinter}
+              >
+                单面打印
+              </Button>
+              <Button 
+                className="flex-1" 
+                variant="outline"
+                onClick={handlePrintDuplex} 
+                disabled={!file || !selectedPrinter || !numPages || pageRange !== ''}
+                title={pageRange !== '' ? "手动分页时不支持双面打印" : ""}
+              >
+                双面打印
+              </Button>
+            </div>
             {jobStatus && <p className="mt-4 text-sm text-muted-foreground text-center">{jobStatus}</p>}
           </div>
         </Card>
       </div>
+      <Dialog open={isWaitingForFlip} onOpenChange={setIsWaitingForFlip}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>手动双面打印</DialogTitle>
+            <DialogDescription>
+              奇数页已发送到打印机。请取出打印好的纸张，将其翻面后重新放入纸盘，然后点击“继续打印”来打印偶数页。
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button onClick={() => setIsWaitingForFlip(false)} variant="secondary">取消</Button>
+            <Button onClick={handleContinueDuplex}>继续打印</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
