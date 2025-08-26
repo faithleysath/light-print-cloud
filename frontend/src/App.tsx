@@ -230,7 +230,7 @@ function App() {
     }
   };
 
-  const submitPrintJob = async (pages?: string) => {
+  const submitPrintJob = async (pages?: string, options: { reverse?: boolean; mirror?: boolean } = {}) => {
     if (!file || !selectedPrinter) {
       setError("请选择文件和打印机。");
       return null;
@@ -247,6 +247,10 @@ function App() {
     formData.append('paper_size', paperSize);
     formData.append('color_mode', colorMode);
     if (printQuality) formData.append('print_quality', printQuality);
+
+    // Add new duplex options
+    if (options.reverse) formData.append('outputorder', 'reverse');
+    if (options.mirror) formData.append('mirror', 'true');
     
     setError(null);
     setJobStatus("正在提交打印任务...");
@@ -281,8 +285,17 @@ function App() {
     }
 
     // Generate page ranges for odd and even pages
+    const isOddTotal = numPages % 2 !== 0;
     const oddPages = Array.from({ length: numPages }, (_, i) => i + 1).filter(n => n % 2 !== 0).join(',');
-    const evenPages = Array.from({ length: numPages }, (_, i) => i + 1).filter(n => n % 2 === 0).join(',');
+    let evenPagesArray = Array.from({ length: numPages }, (_, i) => i + 1).filter(n => n % 2 === 0);
+
+    // If total pages is odd, add a blank page to the end of the even pages print job
+    if (isOddTotal && evenPagesArray.length > 0) {
+      // This is a trick: by adding a non-existent page, some printers might eject a blank sheet.
+      // When printing in reverse, this "blank" page comes out first.
+      evenPagesArray.push(numPages + 1);
+    }
+    const evenPages = evenPagesArray.join(',');
 
     if (!oddPages) {
       setError("没有奇数页可以打印。");
@@ -310,8 +323,8 @@ function App() {
     setJobStatus("正在提交偶数页打印任务...");
     setJobStatusType('info');
     
-    // 3. Print even pages
-    const evenJobId = await submitPrintJob(duplexJobDetails.evenPages);
+    // 3. Print even pages in reverse and mirrored
+    const evenJobId = await submitPrintJob(duplexJobDetails.evenPages, { reverse: true, mirror: true });
     if (evenJobId) {
       setJobStatus(`双面打印任务已全部提交 (奇数页: ${duplexJobDetails.oddJobId}, 偶数页: ${evenJobId})`);
       setJobStatusType('info');

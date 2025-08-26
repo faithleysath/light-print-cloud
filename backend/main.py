@@ -94,6 +94,8 @@ def print_document():
     paper_size = request.form.get('paper_size', 'A4') # Default to A4
     color_mode = request.form.get('color_mode', 'color') # Default to color
     print_quality = request.form.get('print_quality') # Get print quality
+    output_order = request.form.get('outputorder') # For reverse printing
+    mirror = request.form.get('mirror') # For mirrored printing
 
     if file.filename == '':
         return jsonify({"error": "No selected file"}), 400
@@ -144,6 +146,12 @@ def print_document():
                 if print_quality in quality_map_inv:
                     print_options['print-quality'] = quality_map_inv[print_quality]
             
+            # Add duplex-related options if provided
+            if output_order == 'reverse':
+                print_options['outputorder'] = 'reverse'
+            if mirror == 'true':
+                print_options['mirror'] = 'true'
+
             job_id = conn.printFile(printer_name, file_to_print, f"WebApp Print - {filename}", print_options)
             return jsonify({"status": "success", "job_id": job_id})
 
