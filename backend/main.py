@@ -93,6 +93,7 @@ def print_document():
     page_range = request.form.get('page_range')
     paper_size = request.form.get('paper_size', 'A4') # Default to A4
     color_mode = request.form.get('color_mode', 'color') # Default to color
+    print_quality = request.form.get('print_quality') # Get print quality
 
     if file.filename == '':
         return jsonify({"error": "No selected file"}), 400
@@ -137,6 +138,11 @@ def print_document():
             if page_range:
                 # CUPS expects 'page-ranges' for specifying pages
                 print_options['page-ranges'] = page_range
+            if print_quality:
+                # Map quality names back to CUPS integer values
+                quality_map_inv = {'draft': '3', 'normal': '4', 'high': '5'}
+                if print_quality in quality_map_inv:
+                    print_options['print-quality'] = quality_map_inv[print_quality]
             
             job_id = conn.printFile(printer_name, file_to_print, f"WebApp Print - {filename}", print_options)
             return jsonify({"status": "success", "job_id": job_id})
@@ -210,44 +216,43 @@ def get_converted_file(filename):
 
 @app.route('/api/jobs/<int:job_id>', methods=['GET'])
 def get_job_status(job_id):
-    """Gets the status of a print job."""
+    """Gets the status of a print job using a more reliable method."""
     try:
         conn = cups.Connection()
-        jobs = conn.getJobs(which_jobs='all', my_jobs=False) # Check all jobs on the server
+        job_attrs = conn.getJobAttributes(job_id)
+        
+        if not job_attrs:
+            # This can happen if the job ID is very old and purged from CUPS history
+            return jsonify({"job_id": job_id, "state": "completed", "reason": "not-found-or-purged"})
 
-        if job_id in jobs:
-            job_attributes = jobs[job_id]
-            job_state = job_attributes.get('job-state')
-            state_reasons = job_attributes.get('job-state-reasons', 'none')
-
-            # CUPS job states: 3=pending, 4=pending-held, 5=processing, 6=processing-stopped, 7=canceled, 8=aborted, 9=completed
-            status_map = {
-                3: 'pending',
-                4: 'pending-held',
-                5: 'processing',
-                6: 'processing-stopped',
-                7: 'canceled',
-                8: 'aborted',
-                9: 'completed'
-            }
-            status_str = status_map.get(job_state, 'unknown')
-            
-            return jsonify({
-                "job_id": job_id,
-                "status": status_str,
-                "reasons": state_reasons
-            })
-        else:
-            # If the job is not in the active list, it might be completed and cleared.
-            # We'll assume it's completed if we can't find it.
-            return jsonify({"job_id": job_id, "status": "completed", "reasons": "not-found-in-active-jobs"})
-
+        # CUPS job states: 3=pending, 4=pending-held, 5=processing, 6=processing-stopped, 7=canceled, 8=aborted, 9=completed
+        status_map = {
+            3: 'pending',
+            4: 'pending-held',
+            5: 'processing',
+            6: 'processing-stopped',
+            7: 'canceled',
+            8: 'aborted',
+            9: 'completed'
+        }
+        
+        state = job_attrs.get('job-state')
+        state_reason = job_attrs.get('job-state-reasons', 'none')
+        
+        return jsonify({
+            "job_id": job_id,
+            "state": status_map.get(state, 'unknown'),
+            "reason": state_reason
+        })
+    except cups.IPPError:
+        # This specific error often means the job doesn't exist.
+        return jsonify({"job_id": job_id, "state": "completed", "reason": "not-found-ipp-error"})
     except RuntimeError as e:
         print(f"CUPS connection failed during job status check: {e}")
         return jsonify({"error": "Could not connect to CUPS to check job status."}), 500
     except Exception as e:
         print(f"An unexpected error occurred during job status check: {e}")
-        return jsonify({"error": "An unexpected error occurred while checking job status."}), 500
+        return jsonify({"error": f"An unexpected error occurred: {e}"}), 500
 
 # --- Frontend Serving ---
 @app.route('/', defaults={'path': ''})

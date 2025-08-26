@@ -40,6 +40,7 @@ function App() {
   const [pageRange, setPageRange] = useState<string>('');
   const [paperSize, setPaperSize] = useState<string>(''); // Will be set based on printer options
   const [colorMode, setColorMode] = useState<string>(''); // Will be set based on printer options
+  const [printQuality, setPrintQuality] = useState<string>(''); // Will be set based on printer options
   const [jobId, setJobId] = useState<number | null>(null);
   const [jobStatus, setJobStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -85,10 +86,23 @@ function App() {
 
         // Set default values based on the fetched options
         if (options.media_supported?.length > 0) {
-          setPaperSize(options.media_supported[0]);
+          // Prioritize 'iso_a4_210x297mm' as the default paper size
+          if (options.media_supported.includes('iso_a4_210x297mm')) {
+            setPaperSize('iso_a4_210x297mm');
+          } else {
+            setPaperSize(options.media_supported[0]);
+          }
         }
         if (options.color_supported?.length > 0) {
           setColorMode(options.color_supported.includes('color') ? 'color' : options.color_supported[0]);
+        }
+        if (options.print_quality_supported?.length > 0) {
+          // Prioritize 'normal' as the default quality
+          if (options.print_quality_supported.includes('normal')) {
+            setPrintQuality('normal');
+          } else {
+            setPrintQuality(options.print_quality_supported[0]);
+          }
         }
 
       } catch (error) {
@@ -111,8 +125,8 @@ function App() {
         if (!response.ok) {
           throw new Error(data.error || 'Failed to fetch job status.');
         }
-        setJobStatus(`任务 ${jobId}: ${data.status} (${data.reasons})`);
-        if (['completed', 'canceled', 'aborted'].includes(data.status)) {
+        setJobStatus(`任务 ${jobId}: ${data.state} (${data.reason})`);
+        if (['completed', 'canceled', 'aborted'].includes(data.state)) {
           clearInterval(intervalId);
         }
       } catch (error: any) {
@@ -239,6 +253,7 @@ function App() {
     if (pageRange) formData.append('page_range', pageRange);
     formData.append('paper_size', paperSize);
     formData.append('color_mode', colorMode);
+    if (printQuality) formData.append('print_quality', printQuality);
     setError(null);
     setJobStatus("正在提交打印任务...");
     try {
@@ -413,6 +428,25 @@ function App() {
                 <SelectContent>
                   {printerOptions?.color_supported?.map(mode => (
                     <SelectItem key={mode} value={mode}>{mode === 'color' ? '彩色' : '黑白'}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid w-full items-center gap-1.5">
+              <Label htmlFor="quality-select">打印质量</Label>
+              <Select 
+                value={printQuality} 
+                onValueChange={setPrintQuality}
+                disabled={!printerOptions?.print_quality_supported || printerOptions.print_quality_supported.length === 0}
+              >
+                <SelectTrigger id="quality-select">
+                  <SelectValue placeholder="选择打印质量..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {printerOptions?.print_quality_supported?.map(quality => (
+                    <SelectItem key={quality} value={quality}>
+                      {quality === 'draft' ? '草稿' : quality === 'normal' ? '正常' : '高质量'}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
