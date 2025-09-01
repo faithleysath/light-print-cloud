@@ -27,7 +27,7 @@ const API_BASE_URL = '';
 interface PrinterOptions {
   media_supported: string[];
   print_quality_supported: string[];
-  // sides_supported is removed as per user feedback for manual duplex handling
+  sides_supported: string[];
   color_supported: string[];
 }
 
@@ -44,16 +44,15 @@ function App() {
   const [previewType, setPreviewType] = useState<PreviewType>('none');
   const [copies, setCopies] = useState<number>(1);
   const [pageRange, setPageRange] = useState<string>('');
-  const [paperSize, setPaperSize] = useState<string>(''); // Will be set based on printer options
-  const [colorMode, setColorMode] = useState<string>(''); // Will be set based on printer options
-  const [printQuality, setPrintQuality] = useState<string>(''); // Will be set based on printer options
+  const [paperSize, setPaperSize] = useState<string>('');
+  const [colorMode, setColorMode] = useState<string>('');
+  const [printQuality, setPrintQuality] = useState<string>('');
+  const [sides, setSides] = useState<string>(''); // For duplex printing
   const [jobId, setJobId] = useState<number | null>(null);
   const [jobStatus, setJobStatus] = useState<string | null>(null);
   const [jobStatusType, setJobStatusType] = useState<JobStatusType>('info');
   const [error, setError] = useState<string | null>(null);
   const [numPages, setNumPages] = useState<number | null>(null);
-  const [isWaitingForFlip, setIsWaitingForFlip] = useState<boolean>(false);
-  const [duplexJobDetails, setDuplexJobDetails] = useState<{ oddJobId: number, evenPages: string } | null>(null);
   const isDesktop = useMediaQuery("(min-width: 1024px)");
 
   // Fetch printers on component mount
@@ -107,14 +106,20 @@ function App() {
           setColorMode(options.color_supported.includes('color') ? 'color' : options.color_supported[0]);
         }
         if (options.print_quality_supported?.length > 0) {
-          // Prioritize 'normal' as the default quality
           if (options.print_quality_supported.includes('normal')) {
             setPrintQuality('normal');
           } else {
             setPrintQuality(options.print_quality_supported[0]);
           }
         }
-
+        if (options.sides_supported?.length > 0) {
+          // Default to one-sided printing
+          if (options.sides_supported.includes('one-sided')) {
+            setSides('one-sided');
+          } else {
+            setSides(options.sides_supported[0]);
+          }
+        }
       } catch (error) {
         console.error("Failed to fetch printer options:", error);
         setError(`无法加载打印机选项: ${selectedPrinter}`);
@@ -230,28 +235,21 @@ function App() {
     }
   };
 
-  const submitPrintJob = async (pages?: string, options: { reverse?: boolean; mirror?: boolean } = {}) => {
+  const handlePrint = async () => {
     if (!file || !selectedPrinter) {
       setError("请选择文件和打印机。");
-      return null;
+      return;
     }
     const formData = new FormData();
     formData.append('file', file);
     formData.append('printer', selectedPrinter);
     formData.append('copies', copies.toString());
-    
-    // Use the provided pages argument if it exists, otherwise use the state's pageRange
-    const effectivePageRange = pages ?? pageRange;
-    if (effectivePageRange) formData.append('page_range', effectivePageRange);
-
+    if (pageRange) formData.append('page_range', pageRange);
     formData.append('paper_size', paperSize);
     formData.append('color_mode', colorMode);
     if (printQuality) formData.append('print_quality', printQuality);
+    if (sides) formData.append('sides', sides);
 
-    // Add new duplex options
-    if (options.reverse) formData.append('outputorder', 'reverse');
-    if (options.mirror) formData.append('mirror', 'true');
-    
     setError(null);
     setJobStatus("正在提交打印任务...");
     setJobStatusType('info');
@@ -266,7 +264,6 @@ function App() {
         setJobId(data.job_id);
         setJobStatus(`任务 ${data.job_id} 已提交，正在获取状态...`);
         setJobStatusType('info');
-        return data.job_id;
       } else {
         throw new Error(data.error || 'Print submission failed.');
       }
@@ -274,71 +271,6 @@ function App() {
       console.error("Failed to print:", error);
       setError(`打印失败: ${error.message}`);
       setJobStatus(null);
-      return null;
-    }
-  };
-
-  const handlePrintDuplex = async () => {
-    if (!numPages) {
-      setError("无法获取PDF总页数，无法进行双面打印。请确保文件已正确预览。");
-      return;
-    }
-
-    // Generate page ranges for odd and even pages
-    const isOddTotal = numPages % 2 !== 0;
-    const oddPages = Array.from({ length: numPages }, (_, i) => i + 1).filter(n => n % 2 !== 0).join(',');
-    let evenPagesArray = Array.from({ length: numPages }, (_, i) => i + 1).filter(n => n % 2 === 0);
-
-    // If total pages is odd, add a blank page to the end of the even pages print job
-    if (isOddTotal && evenPagesArray.length > 0) {
-      // This is a trick: by adding a non-existent page, some printers might eject a blank sheet.
-      // When printing in reverse, this "blank" page comes out first.
-      evenPagesArray.push(numPages + 1);
-    }
-    const evenPages = evenPagesArray.join(',');
-
-    if (!oddPages) {
-      setError("没有奇数页可以打印。");
-      return;
-    }
-
-    // 1. Print odd pages
-    setJobStatus("正在提交奇数页打印任务...");
-    setJobStatusType('info');
-    const oddJobId = await submitPrintJob(oddPages);
-
-    // 2. If odd pages are submitted successfully, wait for user to flip
-    if (oddJobId && evenPages) {
-      setDuplexJobDetails({ oddJobId, evenPages });
-      setIsWaitingForFlip(true);
-    } else if (oddJobId) {
-      setJobStatus(`奇数页任务 ${oddJobId} 已完成。没有偶数页可打印。`);
-    }
-  };
-
-  const handleContinueDuplex = async () => {
-    if (!duplexJobDetails) return;
-    
-    setIsWaitingForFlip(false);
-    setJobStatus("正在提交偶数页打印任务...");
-    setJobStatusType('info');
-    
-    // 3. Print even pages in reverse and mirrored
-    const evenJobId = await submitPrintJob(duplexJobDetails.evenPages, { reverse: true, mirror: true });
-    if (evenJobId) {
-      setJobStatus(`双面打印任务已全部提交 (奇数页: ${duplexJobDetails.oddJobId}, 偶数页: ${evenJobId})`);
-      setJobStatusType('info');
-    }
-    setDuplexJobDetails(null);
-  };
-
-  const handlePrintSingleSided = async () => {
-    if (pageRange) {
-      // If user specified a range, just print that range.
-      await submitPrintJob(pageRange);
-    } else {
-      // Otherwise, print all pages.
-      await submitPrintJob();
     }
   };
 
@@ -498,26 +430,34 @@ function App() {
                 </SelectContent>
               </Select>
             </div>
+            <div className="grid w-full items-center gap-1.5">
+              <Label htmlFor="sides-select">双面打印</Label>
+              <Select
+                value={sides}
+                onValueChange={setSides}
+                disabled={!printerOptions?.sides_supported || printerOptions.sides_supported.length === 0}
+              >
+                <SelectTrigger id="sides-select">
+                  <SelectValue placeholder="选择双面模式..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {printerOptions?.sides_supported?.map(side => (
+                    <SelectItem key={side} value={side}>
+                      {side === 'one-sided' ? '单面' : side === 'two-sided-long-edge' ? '双面 (长边翻转)' : '双面 (短边翻转)'}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </CardContent>
           <div className="p-6 pt-0 mt-auto">
-            <div className="flex gap-2">
-              <Button 
-                className="flex-1" 
-                onClick={handlePrintSingleSided} 
-                disabled={!file || !selectedPrinter}
-              >
-                单面打印
-              </Button>
-              <Button 
-                className="flex-1" 
-                variant="outline"
-                onClick={handlePrintDuplex} 
-                disabled={!file || !selectedPrinter || !numPages || pageRange !== ''}
-                title={pageRange !== '' ? "手动分页时不支持双面打印" : ""}
-              >
-                双面打印
-              </Button>
-            </div>
+            <Button 
+              className="w-full" 
+              onClick={handlePrint} 
+              disabled={!file || !selectedPrinter}
+            >
+              打印
+            </Button>
             {jobStatus && (
               <Alert variant={jobStatusType === 'error' ? 'destructive' : 'default'} className="mt-4">
                 {jobStatusType === 'info' && <Terminal className="h-4 w-4" />}
@@ -536,20 +476,6 @@ function App() {
           </div>
         </Card>
       </div>
-      <Dialog open={isWaitingForFlip} onOpenChange={setIsWaitingForFlip}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>手动双面打印</DialogTitle>
-            <DialogDescription>
-              奇数页已发送到打印机。请取出打印好的纸张，将其翻面后重新放入纸盘，然后点击“继续打印”来打印偶数页。
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button onClick={() => setIsWaitingForFlip(false)} variant="secondary">取消</Button>
-            <Button onClick={handleContinueDuplex}>继续打印</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

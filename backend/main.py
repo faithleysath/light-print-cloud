@@ -61,7 +61,7 @@ def get_printer_options(printer_name):
         options = {
             "media_supported": attrs.get("media-supported", []),
             "print_quality_supported": attrs.get("print-quality-supported", []),
-            # "sides_supported": attrs.get("sides-supported", []), # As per user feedback, we will handle duplex manually
+            "sides_supported": attrs.get("sides-supported", []),
             "color_supported": attrs.get("print-color-mode-supported", [])
         }
 
@@ -94,8 +94,7 @@ def print_document():
     paper_size = request.form.get('paper_size', 'A4') # Default to A4
     color_mode = request.form.get('color_mode', 'color') # Default to color
     print_quality = request.form.get('print_quality') # Get print quality
-    output_order = request.form.get('outputorder') # For reverse printing
-    mirror = request.form.get('mirror') # For mirrored printing
+    sides = request.form.get('sides') # For duplex printing
 
     if file.filename == '':
         return jsonify({"error": "No selected file"}), 400
@@ -146,11 +145,8 @@ def print_document():
                 if print_quality in quality_map_inv:
                     print_options['print-quality'] = quality_map_inv[print_quality]
             
-            # Add duplex-related options if provided
-            if output_order == 'reverse':
-                print_options['outputorder'] = 'reverse'
-            if mirror == 'true':
-                print_options['mirror'] = 'true'
+            if sides:
+                print_options['sides'] = sides
 
             job_id = conn.printFile(printer_name, file_to_print, f"WebApp Print - {filename}", print_options)
             return jsonify({"status": "success", "job_id": job_id})
